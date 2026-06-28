@@ -61,6 +61,9 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 			StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
 		})
 		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid)
+		if s.mgr.asterisk.Enabled() {
+			go s.bridgeIncomingToAsterisk(c)
+		}
 	}
 	cm.OnStateChange = func(c *call.CallInfo) {
 		if c.IsEnded() {
@@ -89,11 +92,57 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	}
 	cm.OnPeerAudio = func(pcm16 []float32) {
 		ac, ok := s.reg.get(callID)
-		if !ok || ac.bridge == nil {
+		if !ok || ac.leg == nil {
 			return
 		}
-		_ = ac.bridge.WritePCM(pcm16)
+		_ = ac.leg.WritePCM(pcm16)
 	}
+}
+
+func (s *Session) bridgeIncomingToAsterisk(c *call.CallInfo) {
+	ac, ok := s.reg.get(c.CallID)
+	if !ok {
+		return
+	}
+	leg, err := NewSIPLeg(s.mgr.asterisk, c.CallID, c.PeerJid, s.log)
+	if err != nil {
+		s.log.Error("asterisk leg setup failed", "call_id", c.CallID, "err", err)
+		_ = ac.cm.RejectCall(context.Background(), c.CallID, core.EndCallReasonDeclined)
+		s.removeCall(c.CallID)
+		s.mgr.broker.endCall(c.CallID, string(core.EndCallReasonDeclined))
+		return
+	}
+	old, found := s.reg.setLeg(c.CallID, leg)
+	if !found {
+		leg.Close()
+		return
+	}
+	if old != nil {
+		old.Close()
+	}
+	owner := "asterisk"
+	_ = s.mgr.broker.setOwner(c.CallID, owner)
+
+	leg.OnPCM = func(pcm []float32) {
+		ac.cm.FeedCapturedPCM(pcm)
+	}
+	leg.OnAnswered = func() {
+		s.mgr.broker.emitIncomingClaimed(s.id, c.CallID, owner)
+		if err := ac.cm.AcceptCall(context.Background(), c.CallID); err != nil {
+			s.log.Error("accept WhatsApp call after SIP answer failed", "call_id", c.CallID, "err", err)
+			leg.Close()
+		}
+	}
+	leg.OnFailed = func(reason string) {
+		s.log.Info("asterisk leg failed", "call_id", c.CallID, "reason", reason)
+		_ = ac.cm.RejectCall(context.Background(), c.CallID, core.EndCallReasonDeclined)
+		s.removeCall(c.CallID)
+		s.mgr.broker.endCall(c.CallID, string(core.EndCallReasonDeclined))
+	}
+	leg.OnClosed = func() {
+		_ = ac.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
+	}
+	leg.Start()
 }
 
 func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool) (string, error) {
@@ -229,7 +278,7 @@ func (s *Session) info() SessionInfo {
 }
 
 func (s *Session) setBridge(callID string, b *Bridge) {
-	oldB, found := s.reg.setBridge(callID, b)
+	oldB, found := s.reg.setLeg(callID, b)
 	if !found {
 		b.Close()
 		return
@@ -244,8 +293,8 @@ func (s *Session) removeCall(callID string) {
 	if !ok {
 		return
 	}
-	if ac.bridge != nil {
-		ac.bridge.Close()
+	if ac.leg != nil {
+		ac.leg.Close()
 	}
 }
 
@@ -260,8 +309,8 @@ func (s *Session) terminateCall(callID string, reason core.EndCallReason) {
 func (s *Session) teardownAllCalls() {
 	for _, ac := range s.reg.drain() {
 		_ = ac.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
-		if ac.bridge != nil {
-			ac.bridge.Close()
+		if ac.leg != nil {
+			ac.leg.Close()
 		}
 	}
 }

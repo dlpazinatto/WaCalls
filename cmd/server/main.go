@@ -18,6 +18,10 @@ func main() {
 	staticDir := flag.String("static", "client/dist", "static client directory (optional)")
 	debug := flag.Bool("debug", false, "verbose logging")
 	maxCalls := flag.Int("max-calls-per-session", 8, "max concurrent calls per session (0 = unlimited)")
+	asteriskTarget := flag.String("asterisk-sip-target", "", "SIP target for inbound WhatsApp calls, e.g. 600@asterisk:5060")
+	asteriskFrom := flag.String("asterisk-sip-from", "wacalls", "SIP user used in From/Contact headers")
+	asteriskBind := flag.String("asterisk-sip-bind", ":0", "local UDP bind address for SIP")
+	asteriskAdvertiseIP := flag.String("asterisk-advertise-ip", "", "IP advertised in SIP Contact and SDP (auto-detected when empty)")
 	flag.Parse()
 
 	level := slog.LevelInfo
@@ -30,7 +34,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	srv, err := newServer(ctx, *dbPath, *staticDir, *maxCalls, log)
+	asterisk := SIPConfig{
+		Target:      *asteriskTarget,
+		FromUser:    *asteriskFrom,
+		Bind:        *asteriskBind,
+		AdvertiseIP: *asteriskAdvertiseIP,
+	}
+	srv, err := newServer(ctx, *dbPath, *staticDir, *maxCalls, asterisk, log)
 	if err != nil {
 		log.Error("startup failed", "err", err)
 		os.Exit(1)

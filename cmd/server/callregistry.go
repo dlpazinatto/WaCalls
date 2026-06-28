@@ -7,8 +7,13 @@ import (
 )
 
 type activeCall struct {
-	cm     *call.CallManager
-	bridge *Bridge
+	cm  *call.CallManager
+	leg LocalMediaLeg
+}
+
+type LocalMediaLeg interface {
+	WritePCM([]float32) error
+	Close()
 }
 
 type callRegistry struct {
@@ -50,16 +55,25 @@ func (r *callRegistry) count() int {
 	return len(r.calls)
 }
 
-func (r *callRegistry) setBridge(callID string, b *Bridge) (*Bridge, bool) {
+func (r *callRegistry) setLeg(callID string, leg LocalMediaLeg) (LocalMediaLeg, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	ac, ok := r.calls[callID]
 	if !ok {
 		return nil, false
 	}
-	oldB := ac.bridge
-	ac.bridge = b
-	return oldB, true
+	old := ac.leg
+	ac.leg = leg
+	return old, true
+}
+
+func (r *callRegistry) setBridge(callID string, b *Bridge) (*Bridge, bool) {
+	old, ok := r.setLeg(callID, b)
+	if old == nil {
+		return nil, ok
+	}
+	bridge, _ := old.(*Bridge)
+	return bridge, ok
 }
 
 func (r *callRegistry) drain() []*activeCall {
