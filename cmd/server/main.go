@@ -13,16 +13,18 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "HTTP listen address")
-	dbPath := flag.String("db", "wacalls.db", "SQLite session database path")
-	staticDir := flag.String("static", "client/dist", "static client directory (optional)")
+	addr := flag.String("addr", envString("WACALLS_HTTP_ADDR", ":8080"), "HTTP listen address")
+	dbPath := flag.String("db", envString("WACALLS_DB_PATH", "wacalls.db"), "SQLite session database path")
+	staticDir := flag.String("static", envString("WACALLS_STATIC_DIR", "client/dist"), "static client directory (optional)")
 	debug := flag.Bool("debug", false, "verbose logging")
-	maxCalls := flag.Int("max-calls-per-session", 8, "max concurrent calls per session (0 = unlimited)")
-	asteriskTarget := flag.String("asterisk-sip-target", "", "SIP target for inbound WhatsApp calls, e.g. 600@asterisk:5060")
-	asteriskFrom := flag.String("asterisk-sip-from", "wacalls", "SIP user used in From/Contact headers")
-	asteriskBind := flag.String("asterisk-sip-bind", ":0", "local UDP bind address for SIP")
-	asteriskRTPBind := flag.String("asterisk-rtp-bind", ":0", "local UDP bind address for RTP toward Asterisk")
-	asteriskAdvertiseIP := flag.String("asterisk-advertise-ip", "", "IP advertised in SIP Contact and SDP (auto-detected when empty)")
+	maxCalls := flag.Int("max-calls-per-session", envInt("WACALLS_MAX_CALLS_PER_SESSION", 8), "max concurrent calls per session (0 = unlimited)")
+	asteriskTarget := flag.String("asterisk-sip-target", envString("WACALLS_ASTERISK_SIP_TARGET", ""), "fallback SIP target for inbound WhatsApp calls, e.g. 600@asterisk:5060")
+	asteriskFrom := flag.String("asterisk-sip-from", envString("WACALLS_ASTERISK_SIP_FROM", "wacalls"), "fallback SIP user")
+	asteriskBind := flag.String("asterisk-sip-bind", envString("WACALLS_ASTERISK_SIP_BIND", ":0"), "local UDP bind address for SIP")
+	asteriskRTPBind := flag.String("asterisk-rtp-bind", envString("WACALLS_ASTERISK_RTP_BIND", ":0"), "legacy local UDP bind address for RTP toward Asterisk")
+	asteriskAdvertiseIP := flag.String("asterisk-advertise-ip", envString("WACALLS_ADVERTISE_IP", ""), "IP advertised in SIP Contact and SDP (auto-detected when empty)")
+	asteriskRTPMin := flag.Int("asterisk-rtp-min", envInt("WACALLS_RTP_MIN", 0), "first RTP port for Asterisk media legs (0 = dynamic)")
+	asteriskRTPMax := flag.Int("asterisk-rtp-max", envInt("WACALLS_RTP_MAX", 0), "last RTP port for Asterisk media legs")
 	flag.Parse()
 
 	level := slog.LevelInfo
@@ -35,12 +37,14 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	asterisk := SIPConfig{
-		Target:      *asteriskTarget,
-		FromUser:    *asteriskFrom,
-		Bind:        *asteriskBind,
-		RTPBind:     *asteriskRTPBind,
-		AdvertiseIP: *asteriskAdvertiseIP,
+	asterisk := AsteriskDefaults{
+		DefaultTarget: *asteriskTarget,
+		DefaultFrom:   *asteriskFrom,
+		SIPBind:       *asteriskBind,
+		RTPBind:       *asteriskRTPBind,
+		AdvertiseIP:   *asteriskAdvertiseIP,
+		RTPMin:        *asteriskRTPMin,
+		RTPMax:        *asteriskRTPMax,
 	}
 	srv, err := newServer(ctx, *dbPath, *staticDir, *maxCalls, asterisk, log)
 	if err != nil {

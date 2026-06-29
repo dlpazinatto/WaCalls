@@ -15,7 +15,7 @@ type server struct {
 	sessions  *SessionManager
 	log       *slog.Logger
 	staticDir string
-	asterisk  SIPConfig
+	asterisk  *AsteriskGateway
 }
 
 func openDB(dbPath string) (*sql.DB, error) {
@@ -28,7 +28,7 @@ func openDB(dbPath string) (*sql.DB, error) {
 	return db, nil
 }
 
-func newServer(ctx context.Context, dbPath, staticDir string, maxCalls int, asterisk SIPConfig, log *slog.Logger) (*server, error) {
+func newServer(ctx context.Context, dbPath, staticDir string, maxCalls int, asteriskDefaults AsteriskDefaults, log *slog.Logger) (*server, error) {
 	db, err := openDB(dbPath)
 	if err != nil {
 		return nil, err
@@ -41,6 +41,10 @@ func newServer(ctx context.Context, dbPath, staticDir string, maxCalls int, aste
 	if err != nil {
 		return nil, err
 	}
+	routeStore, err := newAsteriskRouteStore(ctx, db)
+	if err != nil {
+		return nil, err
+	}
 
 	waLogger := waLog.Noop
 	if log.Enabled(ctx, slog.LevelDebug) {
@@ -48,6 +52,7 @@ func newServer(ctx context.Context, dbPath, staticDir string, maxCalls int, aste
 	}
 
 	broker := NewBroker()
+	asterisk := NewAsteriskGateway(asteriskDefaults, routeStore)
 	mgr := newSessionManager(ctx, container, broker, store, waLogger, log, maxCalls, asterisk)
 	broker.SnapshotFn = mgr.snapshotEvents
 

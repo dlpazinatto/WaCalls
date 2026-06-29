@@ -20,15 +20,15 @@ type SessionManager struct {
 	waLogger  waLog.Logger
 	log       *slog.Logger
 	maxCalls  int
-	asterisk  SIPConfig
+	asterisk  *AsteriskGateway
 
 	mu       sync.RWMutex
 	sessions map[string]*Session
 	order    []string
 }
 
-func newSessionManager(ctx context.Context, container *sqlstore.Container, broker *Broker, store *sessionStore, waLogger waLog.Logger, log *slog.Logger, maxCalls int, asteriskConfig ...SIPConfig) *SessionManager {
-	asterisk := SIPConfig{}
+func newSessionManager(ctx context.Context, container *sqlstore.Container, broker *Broker, store *sessionStore, waLogger waLog.Logger, log *slog.Logger, maxCalls int, asteriskConfig ...*AsteriskGateway) *SessionManager {
+	var asterisk *AsteriskGateway
 	if len(asteriskConfig) > 0 {
 		asterisk = asteriskConfig[0]
 	}

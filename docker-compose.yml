@@ -1,0 +1,16 @@
+services:
+  wacalls:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wacalls-asterisk-poc:latest
+    container_name: wacallssip
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${WACALLS_HTTP_PORT:-8080}:8080"
+      - "${WACALLS_ASTERISK_SIP_PORT:-25418}:${WACALLS_ASTERISK_SIP_PORT:-25418}/udp"
+      - "${WACALLS_RTP_MIN:-40000}-${WACALLS_RTP_MAX:-40100}:${WACALLS_RTP_MIN:-40000}-${WACALLS_RTP_MAX:-40100}/udp"
+    volumes:
+      - ./data:/data

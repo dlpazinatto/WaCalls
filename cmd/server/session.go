@@ -62,7 +62,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 			StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
 		})
 		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid)
-		if s.mgr.asterisk.Enabled() {
+		if s.mgr.asterisk != nil {
 			go s.bridgeIncomingToAsterisk(c)
 		}
 	}
@@ -108,14 +108,27 @@ func (s *Session) bridgeIncomingToAsterisk(c *call.CallInfo) {
 	}
 	caller := s.sipCallerUser(context.Background(), c)
 	called := sipUserFromOwnJID(s.client.Store.ID)
-	leg, err := NewSIPLeg(s.mgr.asterisk, c.CallID, caller, called, s.log)
+	sipCfg, releaseRTP, ok, err := s.mgr.asterisk.configForCall(context.Background(), s.id, called)
 	if err != nil {
+		s.log.Error("asterisk route lookup failed", "call_id", c.CallID, "err", err)
+		return
+	}
+	if !ok {
+		s.log.Debug("no asterisk route for inbound call", "call_id", c.CallID, "session", s.id, "wa_number", called)
+		return
+	}
+	leg, err := NewSIPLeg(sipCfg, c.CallID, caller, called, s.log)
+	if err != nil {
+		if releaseRTP != nil {
+			releaseRTP()
+		}
 		s.log.Error("asterisk leg setup failed", "call_id", c.CallID, "err", err)
 		_ = ac.cm.RejectCall(context.Background(), c.CallID, core.EndCallReasonDeclined)
 		s.removeCall(c.CallID)
 		s.mgr.broker.endCall(c.CallID, string(core.EndCallReasonDeclined))
 		return
 	}
+	leg.OnReleased = releaseRTP
 	old, found := s.reg.setLeg(c.CallID, leg)
 	if !found {
 		leg.Close()

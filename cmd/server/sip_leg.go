@@ -58,6 +58,7 @@ type SIPLeg struct {
 	OnAnswered func()
 	OnFailed   func(reason string)
 	OnClosed   func()
+	OnReleased func()
 	OnPCM      func([]float32)
 }
 
@@ -182,6 +183,9 @@ func (l *SIPLeg) close(sendHangup bool) {
 	_ = l.rtpConn.Close()
 	close(l.txQueue)
 	l.log.Info("asterisk SIP leg closed", "call_id", l.callID, "action", closeAction)
+	if l.OnReleased != nil {
+		l.OnReleased()
+	}
 }
 
 func (l *SIPLeg) sipLoop() {
