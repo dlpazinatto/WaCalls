@@ -74,6 +74,10 @@ func (s *AsteriskSIPServer) loop(ctx context.Context) {
 		}
 		msg := string(buf[:n])
 		if strings.HasPrefix(msg, "INVITE ") {
+			if leg := s.dialogForMessage(msg); leg != nil {
+				leg.handleSIP(msg)
+				continue
+			}
 			go s.handleInvite(context.Background(), msg, addr)
 			continue
 		}
@@ -81,14 +85,7 @@ func (s *AsteriskSIPServer) loop(ctx context.Context) {
 			s.handleOptions(context.Background(), msg, addr)
 			continue
 		}
-		key := sipDialogKey(msg)
-		if key == "" {
-			continue
-		}
-		s.mu.Lock()
-		leg := s.dialogs[key]
-		s.mu.Unlock()
-		if leg != nil {
+		if leg := s.dialogForMessage(msg); leg != nil {
 			leg.handleSIP(msg)
 		}
 	}
@@ -164,6 +161,11 @@ func (s *AsteriskSIPServer) handleInvite(ctx context.Context, msg string, addr *
 		leg.Reject(500, "Call Registry Error")
 		return
 	}
+	if leg.IsClosed() {
+		s.log.Info("asterisk outbound SIP leg already closed, ending WhatsApp call", "session", sess.id, "sip_call_id", req.CallID, "call_id", callID)
+		_ = ac.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
+		return
+	}
 	old, found := sess.reg.setLeg(callID, leg)
 	if !found {
 		leg.Reject(500, "Call Registry Error")
@@ -177,6 +179,11 @@ func (s *AsteriskSIPServer) handleInvite(ctx context.Context, msg string, addr *
 	}
 	leg.OnClosed = func() {
 		_ = ac.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
+	}
+	if leg.IsClosed() {
+		s.log.Info("asterisk outbound SIP leg closed during setup, ending WhatsApp call", "session", sess.id, "sip_call_id", req.CallID, "call_id", callID)
+		leg.OnClosed()
+		return
 	}
 	leg.Start()
 	leg.Ring()
@@ -235,6 +242,17 @@ func (s *AsteriskSIPServer) deleteDialog(callID string) {
 	s.mu.Lock()
 	delete(s.dialogs, callID)
 	s.mu.Unlock()
+}
+
+func (s *AsteriskSIPServer) dialogForMessage(msg string) *SIPInboundLeg {
+	key := sipDialogKey(msg)
+	if key == "" {
+		return nil
+	}
+	s.mu.Lock()
+	leg := s.dialogs[key]
+	s.mu.Unlock()
+	return leg
 }
 
 func (s *AsteriskSIPServer) selectOutboundSession(req inboundSIPInvite, route AsteriskRoute) (*Session, error) {
@@ -353,6 +371,10 @@ func (l *SIPInboundLeg) SetCallID(callID string) {
 	l.callID = callID
 }
 
+func (l *SIPInboundLeg) IsClosed() bool {
+	return l.closed.Load()
+}
+
 func (l *SIPInboundLeg) Start() {
 	go l.rtpLoop()
 	go l.rtpTxLoop()
@@ -415,6 +437,14 @@ func (l *SIPInboundLeg) Close() {
 
 func (l *SIPInboundLeg) handleSIP(msg string) {
 	switch {
+	case strings.HasPrefix(msg, "INVITE "):
+		l.log.Debug("asterisk outbound SIP INVITE retransmission received", "call_id", l.callID, "sip_call_id", l.sipCallID)
+		if l.answered.Load() {
+			l.sendResponse(200, "OK", l.localSDP())
+		} else if !l.closed.Load() {
+			l.Ring()
+		}
+		return
 	case strings.HasPrefix(msg, "ACK "):
 		return
 	case strings.HasPrefix(msg, "CANCEL "):
