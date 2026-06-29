@@ -10,8 +10,8 @@ type AsteriskRoute struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionId"`
 	WANumber  string `json:"waNumber"`
-	SIPTarget string `json:"sipTarget"`
-	SIPFrom   string `json:"sipFrom"`
+	SIPTarget string `json:"sipServer"`
+	SIPFrom   string `json:"sipFrom,omitempty"`
 	Enabled   bool   `json:"enabled"`
 	CreatedAt int64  `json:"createdAt"`
 	UpdatedAt int64  `json:"updatedAt"`

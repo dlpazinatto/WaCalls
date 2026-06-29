@@ -96,6 +96,7 @@ func decodeAsteriskRoute(w http.ResponseWriter, r *http.Request, defaultEnabled 
 	var body struct {
 		SessionID string `json:"sessionId"`
 		WANumber  string `json:"waNumber"`
+		SIPServer string `json:"sipServer"`
 		SIPTarget string `json:"sipTarget"`
 		SIPFrom   string `json:"sipFrom"`
 		Enabled   *bool  `json:"enabled"`
@@ -107,9 +108,12 @@ func decodeAsteriskRoute(w http.ResponseWriter, r *http.Request, defaultEnabled 
 	route := AsteriskRoute{
 		SessionID: strings.TrimSpace(body.SessionID),
 		WANumber:  normalizePhone(body.WANumber),
-		SIPTarget: strings.TrimSpace(body.SIPTarget),
+		SIPTarget: strings.TrimSpace(body.SIPServer),
 		SIPFrom:   strings.TrimSpace(body.SIPFrom),
 		Enabled:   defaultEnabled,
+	}
+	if route.SIPTarget == "" {
+		route.SIPTarget = strings.TrimSpace(body.SIPTarget)
 	}
 	if body.Enabled != nil {
 		route.Enabled = *body.Enabled
@@ -123,7 +127,7 @@ func decodeAsteriskRoute(w http.ResponseWriter, r *http.Request, defaultEnabled 
 		return AsteriskRoute{}, false
 	}
 	if route.SIPTarget == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sipTarget required"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sipServer required"})
 		return AsteriskRoute{}, false
 	}
 	return route, true

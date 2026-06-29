@@ -18,7 +18,7 @@ func main() {
 	staticDir := flag.String("static", envString("WACALLS_STATIC_DIR", "client/dist"), "static client directory (optional)")
 	debug := flag.Bool("debug", false, "verbose logging")
 	maxCalls := flag.Int("max-calls-per-session", envInt("WACALLS_MAX_CALLS_PER_SESSION", 8), "max concurrent calls per session (0 = unlimited)")
-	asteriskTarget := flag.String("asterisk-sip-target", envString("WACALLS_ASTERISK_SIP_TARGET", ""), "fallback SIP target for inbound WhatsApp calls, e.g. 600@asterisk:5060")
+	asteriskTarget := flag.String("asterisk-sip-target", envString("WACALLS_ASTERISK_SIP_SERVER", envString("WACALLS_ASTERISK_SIP_TARGET", "")), "fallback Asterisk SIP server for inbound WhatsApp calls, e.g. asterisk:5060")
 	asteriskFrom := flag.String("asterisk-sip-from", envString("WACALLS_ASTERISK_SIP_FROM", "wacalls"), "fallback SIP user")
 	asteriskBind := flag.String("asterisk-sip-bind", envString("WACALLS_ASTERISK_SIP_BIND", ":0"), "local UDP bind address for SIP")
 	asteriskRTPBind := flag.String("asterisk-rtp-bind", envString("WACALLS_ASTERISK_RTP_BIND", ":0"), "legacy local UDP bind address for RTP toward Asterisk")
