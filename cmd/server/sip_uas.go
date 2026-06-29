@@ -377,6 +377,7 @@ func (l *SIPInboundLeg) Reject(code int, text string) {
 		return
 	}
 	l.sendResponse(code, text, "")
+	l.log.Info("asterisk outbound SIP leg rejected", "call_id", l.callID, "code", code, "reason", text)
 	l.cleanup()
 }
 
@@ -406,8 +407,10 @@ func (l *SIPInboundLeg) Close() {
 	}
 	if l.answered.Load() {
 		l.sendRequest("BYE")
+		l.log.Info("asterisk outbound SIP BYE sent", "call_id", l.callID, "target", l.req.RemoteSIP.String())
 	} else {
 		l.sendResponse(480, "Temporarily Unavailable", "")
+		l.log.Info("asterisk outbound SIP leg closed before answer", "call_id", l.callID)
 	}
 	l.cleanup()
 }
@@ -417,10 +420,12 @@ func (l *SIPInboundLeg) handleSIP(msg string) {
 	case strings.HasPrefix(msg, "ACK "):
 		return
 	case strings.HasPrefix(msg, "CANCEL "):
+		l.log.Info("asterisk outbound SIP CANCEL received", "call_id", l.callID)
 		l.sendSIPResponseFor(msg, 200, "OK")
 		l.sendResponse(487, "Request Terminated", "")
 		l.closeRemote()
 	case strings.HasPrefix(msg, "BYE "):
+		l.log.Info("asterisk outbound SIP BYE received", "call_id", l.callID)
 		l.sendSIPResponseFor(msg, 200, "OK")
 		l.closeRemote()
 	}
@@ -523,6 +528,7 @@ func (l *SIPInboundLeg) sendRequest(method string) {
 	b.WriteString("User-Agent: WaCalls-Asterisk-Gateway\r\n")
 	b.WriteString("Content-Length: 0\r\n\r\n")
 	_, _ = l.conn.WriteToUDP([]byte(b.String()), l.req.RemoteSIP)
+	l.log.Debug("asterisk outbound SIP request sent", "call_id", l.callID, "method", method, "target", uri)
 }
 
 func (l *SIPInboundLeg) localSDP() string {
