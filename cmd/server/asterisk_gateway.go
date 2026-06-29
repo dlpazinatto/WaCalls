@@ -92,9 +92,6 @@ func (g *AsteriskGateway) sourceAllowed(ctx context.Context, ip net.IP) (bool, e
 	if ip == nil {
 		return false, nil
 	}
-	if sipTargetMatchesIP(g.defaults.DefaultTarget, ip) {
-		return true, nil
-	}
 	routes, err := g.store.list(ctx)
 	if err != nil {
 		return false, err
@@ -105,6 +102,26 @@ func (g *AsteriskGateway) sourceAllowed(ctx context.Context, ip net.IP) (bool, e
 		}
 	}
 	return false, nil
+}
+
+func (g *AsteriskGateway) outboundRouteForSource(ctx context.Context, waNumber string, ip net.IP) (AsteriskRoute, bool, error) {
+	waNumber = normalizePhone(waNumber)
+	if waNumber == "" || ip == nil {
+		return AsteriskRoute{}, false, nil
+	}
+	routes, err := g.store.list(ctx)
+	if err != nil {
+		return AsteriskRoute{}, false, err
+	}
+	for _, route := range routes {
+		if !route.Enabled || route.WANumber != waNumber {
+			continue
+		}
+		if sipTargetMatchesIP(route.SIPTarget, ip) {
+			return route, true, nil
+		}
+	}
+	return AsteriskRoute{}, false, nil
 }
 
 func sipTargetMatchesIP(target string, ip net.IP) bool {

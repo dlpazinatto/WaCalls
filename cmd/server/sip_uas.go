@@ -95,32 +95,36 @@ func (s *AsteriskSIPServer) loop(ctx context.Context) {
 }
 
 func (s *AsteriskSIPServer) handleInvite(ctx context.Context, msg string, addr *net.UDPAddr) {
-	allowed, err := s.gateway.sourceAllowed(ctx, addr.IP)
-	if err != nil {
-		s.log.Warn("asterisk source check failed", "remote_sip", addr.String(), "err", err)
-		sendStatelessSIPResponse(s.conn, addr, msg, 500, "Source Check Failed", "")
-		return
-	}
-	if !allowed {
-		s.log.Warn("asterisk SIP INVITE rejected from unknown source", "remote_sip", addr.String())
-		sendStatelessSIPResponse(s.conn, addr, msg, 403, "Forbidden", "")
-		return
-	}
 	req, err := parseInboundInvite(msg, addr)
 	if err != nil {
 		s.log.Warn("bad asterisk INVITE", "err", err)
 		sendStatelessSIPResponse(s.conn, addr, msg, 400, "Bad Request", "")
 		return
 	}
-	s.log.Info("asterisk SIP INVITE received", "remote_sip", addr.String(), "call_id", req.CallID, "target", req.TargetUser, "from", req.FromUser)
-	sendStatelessSIPResponse(s.conn, addr, msg, 100, "Trying", "")
-
-	sess, err := s.selectOutboundSession(ctx, req)
+	if req.WANumber == "" {
+		s.log.Warn("asterisk SIP INVITE rejected without X-WaCalls-Number", "remote_sip", addr.String(), "call_id", req.CallID, "target", req.TargetUser)
+		sendStatelessSIPResponse(s.conn, addr, msg, 400, "X-WaCalls-Number Required", "")
+		return
+	}
+	route, ok, err := s.gateway.outboundRouteForSource(ctx, req.WANumber, addr.IP)
 	if err != nil {
-		s.log.Warn("no WhatsApp session for outbound SIP call", "call_id", req.CallID, "target", req.TargetUser, "err", err)
+		s.log.Warn("asterisk route lookup failed", "remote_sip", addr.String(), "wa_number", req.WANumber, "err", err)
+		sendStatelessSIPResponse(s.conn, addr, msg, 500, "Route Lookup Failed", "")
+		return
+	}
+	if !ok {
+		s.log.Warn("asterisk SIP INVITE rejected for unregistered source/number", "remote_sip", addr.String(), "call_id", req.CallID, "wa_number", req.WANumber, "target", req.TargetUser)
+		sendStatelessSIPResponse(s.conn, addr, msg, 403, "Forbidden", "")
+		return
+	}
+	sess, err := s.selectOutboundSession(req, route)
+	if err != nil {
+		s.log.Warn("no WhatsApp session for outbound SIP call", "call_id", req.CallID, "wa_number", req.WANumber, "target", req.TargetUser, "err", err)
 		sendStatelessSIPResponse(s.conn, addr, msg, 404, "No WhatsApp Session", "")
 		return
 	}
+	s.log.Info("asterisk SIP INVITE received", "remote_sip", addr.String(), "call_id", req.CallID, "wa_number", req.WANumber, "target", req.TargetUser, "from", req.FromUser)
+	sendStatelessSIPResponse(s.conn, addr, msg, 100, "Trying", "")
 
 	rtpBind, release, err := s.gateway.acquireRTPBind()
 	if err != nil {
@@ -176,7 +180,7 @@ func (s *AsteriskSIPServer) handleInvite(ctx context.Context, msg string, addr *
 	}
 	leg.Start()
 	leg.Ring()
-	s.log.Info("outbound WhatsApp call started from Asterisk", "session", sess.id, "remote_sip", addr.String(), "sip_call_id", req.CallID, "call_id", callID, "target", req.TargetUser)
+	s.log.Info("outbound WhatsApp call started from Asterisk", "session", sess.id, "wa_number", req.WANumber, "remote_sip", addr.String(), "sip_call_id", req.CallID, "call_id", callID, "target", req.TargetUser)
 }
 
 func (s *AsteriskSIPServer) handleOptions(ctx context.Context, req string, addr *net.UDPAddr) {
@@ -233,52 +237,18 @@ func (s *AsteriskSIPServer) deleteDialog(callID string) {
 	s.mu.Unlock()
 }
 
-func (s *AsteriskSIPServer) selectOutboundSession(ctx context.Context, req inboundSIPInvite) (*Session, error) {
-	if req.SessionID != "" {
-		if sess, ok := s.manager.Get(req.SessionID); ok && sess.info().Paired {
-			return sess, nil
-		}
-		return nil, fmt.Errorf("session %s not paired", req.SessionID)
+func (s *AsteriskSIPServer) selectOutboundSession(req inboundSIPInvite, route AsteriskRoute) (*Session, error) {
+	if route.SessionID == "" {
+		return nil, fmt.Errorf("route has no session")
 	}
-	if req.WANumber != "" {
-		if sess, ok := s.manager.sessionByWANumber(req.WANumber); ok {
-			return sess, nil
-		}
+	sess, ok := s.manager.Get(route.SessionID)
+	if !ok || !sess.info().Paired {
+		return nil, fmt.Errorf("route session %s not paired", route.SessionID)
 	}
-	routes, err := s.gateway.store.list(ctx)
-	if err != nil {
-		return nil, err
+	if got := sipUserFromOwnJID(sess.client.Store.ID); got != req.WANumber {
+		return nil, fmt.Errorf("route session number mismatch: route=%s session=%s", req.WANumber, got)
 	}
-	var selected *Session
-	for _, route := range routes {
-		if !route.Enabled {
-			continue
-		}
-		if !sipTargetMatchesIP(route.SIPTarget, req.RemoteSIP.IP) {
-			continue
-		}
-		if req.WANumber != "" && route.WANumber != req.WANumber {
-			continue
-		}
-		if route.SessionID == "" {
-			continue
-		}
-		sess, ok := s.manager.Get(route.SessionID)
-		if !ok || !sess.info().Paired {
-			continue
-		}
-		if selected != nil {
-			return nil, fmt.Errorf("multiple outbound sessions match; send X-WaCalls-Session")
-		}
-		selected = sess
-	}
-	if selected != nil {
-		return selected, nil
-	}
-	if sess, ok := s.manager.singlePairedSession(); ok {
-		return sess, nil
-	}
-	return nil, fmt.Errorf("no paired session")
+	return sess, nil
 }
 
 type inboundSIPInvite struct {
