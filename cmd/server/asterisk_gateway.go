@@ -24,6 +24,13 @@ type AsteriskGateway struct {
 	rtpPool  *rtpPortPool
 }
 
+type AsteriskCallRoute struct {
+	SIPConfig SIPConfig
+	ToUser    string
+	FromUser  string
+	Release   func()
+}
+
 func NewAsteriskGateway(defaults AsteriskDefaults, store *asteriskRouteStore) *AsteriskGateway {
 	return &AsteriskGateway{
 		defaults: defaults,
@@ -32,23 +39,27 @@ func NewAsteriskGateway(defaults AsteriskDefaults, store *asteriskRouteStore) *A
 	}
 }
 
-func (g *AsteriskGateway) configForCall(ctx context.Context, sessionID, waNumber string) (SIPConfig, func(), bool, error) {
+func (g *AsteriskGateway) configForCall(ctx context.Context, sessionID, waNumber string) (AsteriskCallRoute, bool, error) {
 	route, ok, err := g.store.findForSession(ctx, sessionID, waNumber)
 	if err != nil {
-		return SIPConfig{}, nil, false, err
+		return AsteriskCallRoute{}, false, err
 	}
 	target := g.defaults.DefaultTarget
 	from := g.defaults.DefaultFrom
+	toUser := ""
+	fromUser := ""
 	if ok {
 		target = route.SIPTarget
 		from = route.SIPFrom
+		toUser = route.ToUser
+		fromUser = route.FromUser
 	}
 	if strings.TrimSpace(target) == "" {
-		return SIPConfig{}, nil, false, nil
+		return AsteriskCallRoute{}, false, nil
 	}
 	port, release, err := g.rtpPool.acquire()
 	if err != nil {
-		return SIPConfig{}, nil, false, err
+		return AsteriskCallRoute{}, false, err
 	}
 	rtpBind := g.defaults.RTPBind
 	if port != 0 {
@@ -61,7 +72,7 @@ func (g *AsteriskGateway) configForCall(ctx context.Context, sessionID, waNumber
 		RTPBind:     rtpBind,
 		AdvertiseIP: g.defaults.AdvertiseIP,
 	}
-	return cfg, release, true, nil
+	return AsteriskCallRoute{SIPConfig: cfg, ToUser: toUser, FromUser: fromUser, Release: release}, true, nil
 }
 
 type rtpPortPool struct {

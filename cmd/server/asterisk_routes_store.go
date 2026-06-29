@@ -12,6 +12,8 @@ type AsteriskRoute struct {
 	WANumber  string `json:"waNumber"`
 	SIPTarget string `json:"sipServer"`
 	SIPFrom   string `json:"sipFrom,omitempty"`
+	ToUser    string `json:"toUser,omitempty"`
+	FromUser  string `json:"fromUser,omitempty"`
 	Enabled   bool   `json:"enabled"`
 	CreatedAt int64  `json:"createdAt"`
 	UpdatedAt int64  `json:"updatedAt"`
@@ -26,6 +28,8 @@ func newAsteriskRouteStore(ctx context.Context, db *sql.DB) (*asteriskRouteStore
 		wa_number  TEXT NOT NULL,
 		sip_target TEXT NOT NULL,
 		sip_from   TEXT NOT NULL DEFAULT '',
+		to_user    TEXT NOT NULL DEFAULT '',
+		from_user  TEXT NOT NULL DEFAULT '',
 		enabled    INTEGER NOT NULL DEFAULT 1,
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL
@@ -33,11 +37,17 @@ func newAsteriskRouteStore(ctx context.Context, db *sql.DB) (*asteriskRouteStore
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureAsteriskRouteColumn(ctx, db, "to_user", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return nil, err
+	}
+	if err := ensureAsteriskRouteColumn(ctx, db, "from_user", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return nil, err
+	}
 	return &asteriskRouteStore{db: db}, nil
 }
 
 func (s *asteriskRouteStore) list(ctx context.Context) ([]AsteriskRoute, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, session_id, wa_number, sip_target, sip_from, enabled, created_at, updated_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, session_id, wa_number, sip_target, sip_from, to_user, from_user, enabled, created_at, updated_at
 		FROM asterisk_routes ORDER BY rowid`)
 	if err != nil {
 		return nil, err
@@ -55,7 +65,7 @@ func (s *asteriskRouteStore) list(ctx context.Context) ([]AsteriskRoute, error) 
 }
 
 func (s *asteriskRouteStore) findForSession(ctx context.Context, sessionID, waNumber string) (AsteriskRoute, bool, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, session_id, wa_number, sip_target, sip_from, enabled, created_at, updated_at
+	row := s.db.QueryRowContext(ctx, `SELECT id, session_id, wa_number, sip_target, sip_from, to_user, from_user, enabled, created_at, updated_at
 		FROM asterisk_routes
 		WHERE enabled = 1 AND (session_id = ? OR wa_number = ?)
 		ORDER BY CASE WHEN session_id = ? THEN 0 ELSE 1 END, rowid
@@ -78,9 +88,9 @@ func (s *asteriskRouteStore) insert(ctx context.Context, r AsteriskRoute) (Aster
 	r.CreatedAt = now
 	r.UpdatedAt = now
 	_, err := s.db.ExecContext(ctx, `INSERT INTO asterisk_routes
-		(id, session_id, wa_number, sip_target, sip_from, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.ID, r.SessionID, r.WANumber, r.SIPTarget, r.SIPFrom, boolInt(r.Enabled), r.CreatedAt, r.UpdatedAt)
+		(id, session_id, wa_number, sip_target, sip_from, to_user, from_user, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.SessionID, r.WANumber, r.SIPTarget, r.SIPFrom, r.ToUser, r.FromUser, boolInt(r.Enabled), r.CreatedAt, r.UpdatedAt)
 	return r, err
 }
 
@@ -88,9 +98,9 @@ func (s *asteriskRouteStore) update(ctx context.Context, id string, r AsteriskRo
 	r.ID = id
 	r.UpdatedAt = time.Now().UnixMilli()
 	res, err := s.db.ExecContext(ctx, `UPDATE asterisk_routes
-		SET session_id = ?, wa_number = ?, sip_target = ?, sip_from = ?, enabled = ?, updated_at = ?
+		SET session_id = ?, wa_number = ?, sip_target = ?, sip_from = ?, to_user = ?, from_user = ?, enabled = ?, updated_at = ?
 		WHERE id = ?`,
-		r.SessionID, r.WANumber, r.SIPTarget, r.SIPFrom, boolInt(r.Enabled), r.UpdatedAt, id)
+		r.SessionID, r.WANumber, r.SIPTarget, r.SIPFrom, r.ToUser, r.FromUser, boolInt(r.Enabled), r.UpdatedAt, id)
 	if err != nil {
 		return AsteriskRoute{}, false, err
 	}
@@ -98,7 +108,7 @@ func (s *asteriskRouteStore) update(ctx context.Context, id string, r AsteriskRo
 	if n == 0 {
 		return AsteriskRoute{}, false, nil
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT id, session_id, wa_number, sip_target, sip_from, enabled, created_at, updated_at
+	row := s.db.QueryRowContext(ctx, `SELECT id, session_id, wa_number, sip_target, sip_from, to_user, from_user, enabled, created_at, updated_at
 		FROM asterisk_routes WHERE id = ?`, id)
 	out, err := scanAsteriskRoute(row)
 	return out, err == nil, err
@@ -120,9 +130,35 @@ type routeScanner interface {
 func scanAsteriskRoute(row routeScanner) (AsteriskRoute, error) {
 	var r AsteriskRoute
 	var enabled int
-	err := row.Scan(&r.ID, &r.SessionID, &r.WANumber, &r.SIPTarget, &r.SIPFrom, &enabled, &r.CreatedAt, &r.UpdatedAt)
+	err := row.Scan(&r.ID, &r.SessionID, &r.WANumber, &r.SIPTarget, &r.SIPFrom, &r.ToUser, &r.FromUser, &enabled, &r.CreatedAt, &r.UpdatedAt)
 	r.Enabled = enabled != 0
 	return r, err
+}
+
+func ensureAsteriskRouteColumn(ctx context.Context, db *sql.DB, name, definition string) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(asterisk_routes)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var colName, colType string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &colName, &colType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if colName == name {
+			return rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `ALTER TABLE asterisk_routes ADD COLUMN `+name+` `+definition)
+	return err
 }
 
 func boolInt(v bool) int {

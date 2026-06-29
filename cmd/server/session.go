@@ -108,7 +108,7 @@ func (s *Session) bridgeIncomingToAsterisk(c *call.CallInfo) {
 	}
 	caller := s.sipCallerUser(context.Background(), c)
 	called := sipUserFromOwnJID(s.client.Store.ID)
-	sipCfg, releaseRTP, ok, err := s.mgr.asterisk.configForCall(context.Background(), s.id, called)
+	callRoute, ok, err := s.mgr.asterisk.configForCall(context.Background(), s.id, called)
 	if err != nil {
 		s.log.Error("asterisk route lookup failed", "call_id", c.CallID, "err", err)
 		return
@@ -117,10 +117,16 @@ func (s *Session) bridgeIncomingToAsterisk(c *call.CallInfo) {
 		s.log.Debug("no asterisk route for inbound call", "call_id", c.CallID, "session", s.id, "wa_number", called)
 		return
 	}
-	leg, err := NewSIPLeg(sipCfg, c.CallID, caller, called, s.log)
+	if callRoute.FromUser != "" {
+		caller = callRoute.FromUser
+	}
+	if callRoute.ToUser != "" {
+		called = callRoute.ToUser
+	}
+	leg, err := NewSIPLeg(callRoute.SIPConfig, c.CallID, caller, called, s.log)
 	if err != nil {
-		if releaseRTP != nil {
-			releaseRTP()
+		if callRoute.Release != nil {
+			callRoute.Release()
 		}
 		s.log.Error("asterisk leg setup failed", "call_id", c.CallID, "err", err)
 		_ = ac.cm.RejectCall(context.Background(), c.CallID, core.EndCallReasonDeclined)
@@ -128,7 +134,7 @@ func (s *Session) bridgeIncomingToAsterisk(c *call.CallInfo) {
 		s.mgr.broker.endCall(c.CallID, string(core.EndCallReasonDeclined))
 		return
 	}
-	leg.OnReleased = releaseRTP
+	leg.OnReleased = callRoute.Release
 	old, found := s.reg.setLeg(c.CallID, leg)
 	if !found {
 		leg.Close()

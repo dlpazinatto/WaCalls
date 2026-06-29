@@ -99,6 +99,10 @@ func decodeAsteriskRoute(w http.ResponseWriter, r *http.Request, defaultEnabled 
 		SIPServer string `json:"sipServer"`
 		SIPTarget string `json:"sipTarget"`
 		SIPFrom   string `json:"sipFrom"`
+		ToUser    string `json:"toUser"`
+		FromUser  string `json:"fromUser"`
+		SIPTo     string `json:"sipTo"`
+		SIPCaller string `json:"sipCaller"`
 		Enabled   *bool  `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -110,10 +114,24 @@ func decodeAsteriskRoute(w http.ResponseWriter, r *http.Request, defaultEnabled 
 		WANumber:  normalizePhone(body.WANumber),
 		SIPTarget: strings.TrimSpace(body.SIPServer),
 		SIPFrom:   strings.TrimSpace(body.SIPFrom),
+		ToUser:    sanitizeSIPUser(body.ToUser),
+		FromUser:  sanitizeSIPUser(body.FromUser),
 		Enabled:   defaultEnabled,
 	}
 	if route.SIPTarget == "" {
 		route.SIPTarget = strings.TrimSpace(body.SIPTarget)
+	}
+	if route.ToUser == "" || route.ToUser == "unknown" {
+		route.ToUser = sanitizeSIPUser(body.SIPTo)
+	}
+	if route.FromUser == "" || route.FromUser == "unknown" {
+		route.FromUser = sanitizeSIPUser(body.SIPCaller)
+	}
+	if route.ToUser == "unknown" {
+		route.ToUser = ""
+	}
+	if route.FromUser == "unknown" {
+		route.FromUser = ""
 	}
 	if body.Enabled != nil {
 		route.Enabled = *body.Enabled
