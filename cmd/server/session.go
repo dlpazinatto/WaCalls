@@ -88,6 +88,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		s.mgr.broker.upsertCall(rec)
 	}
 	cm.OnEnded = func(c *call.CallInfo) {
+		s.log.Info("WhatsApp call ended, closing local media leg", "call_id", c.CallID, "reason", string(c.StateData.EndReason))
 		s.removeCall(c.CallID)
 		s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
 	}
@@ -143,6 +144,7 @@ func (s *Session) bridgeIncomingToAsterisk(c *call.CallInfo) {
 		s.mgr.broker.endCall(c.CallID, string(core.EndCallReasonDeclined))
 	}
 	leg.OnClosed = func() {
+		s.log.Info("asterisk BYE received, ending WhatsApp call", "call_id", c.CallID)
 		_ = ac.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
 	}
 	leg.Start()

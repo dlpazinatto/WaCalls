@@ -163,19 +163,25 @@ func (l *SIPLeg) close(sendHangup bool) {
 	if l.closed.Swap(true) {
 		return
 	}
+	closeAction := "local"
 	if sendHangup {
 		l.mu.RLock()
 		answered := l.answered
 		l.mu.RUnlock()
 		if answered {
+			closeAction = "bye"
 			l.sendBye()
 		} else {
+			closeAction = "cancel"
 			l.sendCancel()
 		}
+	} else {
+		closeAction = "remote"
 	}
 	_ = l.sipConn.Close()
 	_ = l.rtpConn.Close()
 	close(l.txQueue)
+	l.log.Info("asterisk SIP leg closed", "call_id", l.callID, "action", closeAction)
 }
 
 func (l *SIPLeg) sipLoop() {
@@ -191,6 +197,7 @@ func (l *SIPLeg) sipLoop() {
 			continue
 		}
 		if strings.HasPrefix(msg, "BYE ") {
+			l.log.Info("asterisk BYE received", "call_id", l.callID)
 			l.sendSIPResponse(msg, 200, "OK")
 			l.close(false)
 			if l.OnClosed != nil {
@@ -302,11 +309,13 @@ func (l *SIPLeg) sendAck() {
 func (l *SIPLeg) sendBye() {
 	msg := l.baseRequest("BYE", 2, "", "")
 	_, _ = l.sipConn.WriteToUDP([]byte(msg), l.remoteSIP)
+	l.log.Info("asterisk SIP BYE sent", "call_id", l.callID, "target", l.targetURI)
 }
 
 func (l *SIPLeg) sendCancel() {
 	msg := l.baseRequest("CANCEL", 1, "", "")
 	_, _ = l.sipConn.WriteToUDP([]byte(msg), l.remoteSIP)
+	l.log.Info("asterisk SIP CANCEL sent", "call_id", l.callID, "target", l.targetURI)
 }
 
 func (l *SIPLeg) baseRequest(method string, cseq int, body, contentType string) string {
