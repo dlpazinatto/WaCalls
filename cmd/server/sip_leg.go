@@ -28,9 +28,11 @@ func (c SIPConfig) Enabled() bool {
 type SIPLeg struct {
 	cfg       SIPConfig
 	callID    string
-	peer      string
+	caller    string
+	called    string
 	targetURI string
 	fromURI   string
+	identity  string
 	contact   string
 	remoteSIP *net.UDPAddr
 	sipConn   *net.UDPConn
@@ -59,11 +61,13 @@ type SIPLeg struct {
 	OnPCM      func([]float32)
 }
 
-func NewSIPLeg(cfg SIPConfig, callID, peer string, log *slog.Logger) (*SIPLeg, error) {
-	targetURI, remoteSIP, err := parseSIPTarget(cfg.Target)
+func NewSIPLeg(cfg SIPConfig, callID, caller, called string, log *slog.Logger) (*SIPLeg, error) {
+	targetHost, remoteSIP, err := parseSIPTarget(cfg.Target)
 	if err != nil {
 		return nil, err
 	}
+	caller = sanitizeSIPUser(caller)
+	called = sanitizeSIPUser(called)
 	if cfg.FromUser == "" {
 		cfg.FromUser = "wacalls"
 	}
@@ -91,13 +95,17 @@ func NewSIPLeg(cfg SIPConfig, callID, peer string, log *slog.Logger) (*SIPLeg, e
 	}
 	rtpPort := rtpConn.LocalAddr().(*net.UDPAddr).Port
 	sipPort := sipConn.LocalAddr().(*net.UDPAddr).Port
-	fromURI := "sip:" + cfg.FromUser + "@" + localIP
+	fromURI := "sip:" + caller + "@" + localIP
+	targetURI := "sip:" + called + "@" + targetHost
+	identity := "<" + fromURI + ">"
 	leg := &SIPLeg{
 		cfg:       cfg,
 		callID:    callID,
-		peer:      peer,
+		caller:    caller,
+		called:    called,
 		targetURI: targetURI,
 		fromURI:   fromURI,
+		identity:  identity,
 		contact:   "<" + fromURI + ":" + strconv.Itoa(sipPort) + ">",
 		remoteSIP: remoteSIP,
 		sipConn:   sipConn,
@@ -315,6 +323,8 @@ func (l *SIPLeg) baseRequest(method string, cseq int, body, contentType string) 
 	b.WriteString("Call-ID: " + l.sipID + "\r\n")
 	b.WriteString("CSeq: " + strconv.Itoa(cseq) + " " + method + "\r\n")
 	b.WriteString("Contact: " + l.contact + "\r\n")
+	b.WriteString("P-Asserted-Identity: " + l.identity + "\r\n")
+	b.WriteString("Remote-Party-ID: " + l.identity + ";party=calling;privacy=off;screen=no\r\n")
 	b.WriteString("User-Agent: WaCalls-Asterisk-Gateway\r\n")
 	if contentType != "" {
 		b.WriteString("Content-Type: " + contentType + "\r\n")
@@ -364,7 +374,31 @@ func parseSIPTarget(raw string) (string, *net.UDPAddr, error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve SIP target: %w", err)
 	}
-	return "sip:" + target, addr, nil
+	return hostport, addr, nil
+}
+
+func sanitizeSIPUser(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "unknown"
+	}
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r == '+' || r == '-' || r == '_' || r == '.':
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		return "unknown"
+	}
+	return b.String()
 }
 
 func mustUDPAddr(raw string) *net.UDPAddr {

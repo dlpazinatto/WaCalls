@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -104,7 +105,9 @@ func (s *Session) bridgeIncomingToAsterisk(c *call.CallInfo) {
 	if !ok {
 		return
 	}
-	leg, err := NewSIPLeg(s.mgr.asterisk, c.CallID, c.PeerJid, s.log)
+	caller := sipUserFromCall(c)
+	called := sipUserFromOwnJID(s.client.Store.ID)
+	leg, err := NewSIPLeg(s.mgr.asterisk, c.CallID, caller, called, s.log)
 	if err != nil {
 		s.log.Error("asterisk leg setup failed", "call_id", c.CallID, "err", err)
 		_ = ac.cm.RejectCall(context.Background(), c.CallID, core.EndCallReasonDeclined)
@@ -143,6 +146,42 @@ func (s *Session) bridgeIncomingToAsterisk(c *call.CallInfo) {
 		_ = ac.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
 	}
 	leg.Start()
+}
+
+func sipUserFromCall(c *call.CallInfo) string {
+	if c.CallerPn != "" {
+		return sipUserFromJIDString(c.CallerPn)
+	}
+	if c.PeerJid != "" {
+		return sipUserFromJIDString(c.PeerJid)
+	}
+	return "unknown"
+}
+
+func sipUserFromOwnJID(jid *types.JID) string {
+	if jid == nil {
+		return "unknown"
+	}
+	return sipUserFromJIDString(jid.String())
+}
+
+func sipUserFromJIDString(raw string) string {
+	user := raw
+	if before, _, ok := strings.Cut(user, "@"); ok {
+		user = before
+	}
+	if before, _, ok := strings.Cut(user, ":"); ok {
+		user = before
+	}
+	digits := normalizePhone(user)
+	if digits != "" {
+		return digits
+	}
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return "unknown"
+	}
+	return sanitizeSIPUser(user)
 }
 
 func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool) (string, error) {
