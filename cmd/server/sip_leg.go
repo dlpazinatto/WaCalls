@@ -302,7 +302,7 @@ func (l *SIPLeg) sendInvite() {
 	sdp := l.localSDP()
 	msg := l.baseRequest("INVITE", 1, sdp, "application/sdp")
 	_, _ = l.sipConn.WriteToUDP([]byte(msg), l.remoteSIP)
-	l.log.Info("asterisk SIP INVITE sent", "call_id", l.callID, "target", l.targetURI, "rtp_port", l.rtpPort)
+	l.log.Info("asterisk SIP INVITE sent", "call_id", l.callID, "target", l.targetURI, "remote_sip", l.remoteSIP.String(), "local_sip", l.sipConn.LocalAddr().String(), "rtp_port", l.rtpPort)
 }
 
 func (l *SIPLeg) sendAck() {

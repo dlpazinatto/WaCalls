@@ -101,6 +101,7 @@ func (s *AsteriskSIPServer) handleInvite(ctx context.Context, msg string, addr *
 		sendStatelessSIPResponse(s.conn, addr, msg, 400, "Bad Request", "")
 		return
 	}
+	s.log.Info("asterisk SIP INVITE received", "remote_sip", addr.String(), "call_id", req.CallID, "target", req.TargetUser, "from", req.FromUser)
 	sendStatelessSIPResponse(s.conn, addr, msg, 100, "Trying", "")
 
 	sess, err := s.selectOutboundSession(ctx, req)
@@ -164,7 +165,7 @@ func (s *AsteriskSIPServer) handleInvite(ctx context.Context, msg string, addr *
 	}
 	leg.Start()
 	leg.Ring()
-	s.log.Info("outbound WhatsApp call started from Asterisk", "session", sess.id, "sip_call_id", req.CallID, "call_id", callID, "target", req.TargetUser)
+	s.log.Info("outbound WhatsApp call started from Asterisk", "session", sess.id, "remote_sip", addr.String(), "sip_call_id", req.CallID, "call_id", callID, "target", req.TargetUser)
 }
 
 func (s *AsteriskSIPServer) sendOptionsOK(req string, addr *net.UDPAddr) {
