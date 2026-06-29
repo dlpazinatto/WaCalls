@@ -17,6 +17,7 @@ type SIPConfig struct {
 	Target      string
 	FromUser    string
 	Bind        string
+	RTPBind     string
 	AdvertiseIP string
 }
 
@@ -69,11 +70,14 @@ func NewSIPLeg(cfg SIPConfig, callID, peer string, log *slog.Logger) (*SIPLeg, e
 	if cfg.Bind == "" {
 		cfg.Bind = ":0"
 	}
+	if cfg.RTPBind == "" {
+		cfg.RTPBind = ":0"
+	}
 	sipConn, err := net.ListenUDP("udp", mustUDPAddr(cfg.Bind))
 	if err != nil {
 		return nil, fmt.Errorf("listen sip: %w", err)
 	}
-	rtpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	rtpConn, err := net.ListenUDP("udp", mustUDPAddr(cfg.RTPBind))
 	if err != nil {
 		_ = sipConn.Close()
 		return nil, fmt.Errorf("listen rtp: %w", err)

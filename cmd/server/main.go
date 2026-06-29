@@ -21,6 +21,7 @@ func main() {
 	asteriskTarget := flag.String("asterisk-sip-target", "", "SIP target for inbound WhatsApp calls, e.g. 600@asterisk:5060")
 	asteriskFrom := flag.String("asterisk-sip-from", "wacalls", "SIP user used in From/Contact headers")
 	asteriskBind := flag.String("asterisk-sip-bind", ":0", "local UDP bind address for SIP")
+	asteriskRTPBind := flag.String("asterisk-rtp-bind", ":0", "local UDP bind address for RTP toward Asterisk")
 	asteriskAdvertiseIP := flag.String("asterisk-advertise-ip", "", "IP advertised in SIP Contact and SDP (auto-detected when empty)")
 	flag.Parse()
 
@@ -38,6 +39,7 @@ func main() {
 		Target:      *asteriskTarget,
 		FromUser:    *asteriskFrom,
 		Bind:        *asteriskBind,
+		RTPBind:     *asteriskRTPBind,
 		AdvertiseIP: *asteriskAdvertiseIP,
 	}
 	srv, err := newServer(ctx, *dbPath, *staticDir, *maxCalls, asterisk, log)
