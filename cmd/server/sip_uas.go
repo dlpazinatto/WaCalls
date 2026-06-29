@@ -77,6 +77,10 @@ func (s *AsteriskSIPServer) loop(ctx context.Context) {
 			go s.handleInvite(context.Background(), msg, addr)
 			continue
 		}
+		if strings.HasPrefix(msg, "OPTIONS ") {
+			s.sendOptionsOK(msg, addr)
+			continue
+		}
 		key := sipDialogKey(msg)
 		if key == "" {
 			continue
@@ -161,6 +165,37 @@ func (s *AsteriskSIPServer) handleInvite(ctx context.Context, msg string, addr *
 	leg.Start()
 	leg.Ring()
 	s.log.Info("outbound WhatsApp call started from Asterisk", "session", sess.id, "sip_call_id", req.CallID, "call_id", callID, "target", req.TargetUser)
+}
+
+func (s *AsteriskSIPServer) sendOptionsOK(req string, addr *net.UDPAddr) {
+	headers := sipHeaders(req)
+	var b strings.Builder
+	b.WriteString("SIP/2.0 200 OK\r\n")
+	if via := headers["via"]; via != "" {
+		b.WriteString("Via: " + via + "\r\n")
+	}
+	if from := headers["from"]; from != "" {
+		b.WriteString("From: " + from + "\r\n")
+	}
+	if to := headers["to"]; to != "" {
+		if !strings.Contains(strings.ToLower(to), ";tag=") {
+			to += ";tag=" + token(8)
+		}
+		b.WriteString("To: " + to + "\r\n")
+	}
+	if callID := headers["call-id"]; callID != "" {
+		b.WriteString("Call-ID: " + callID + "\r\n")
+	}
+	if cseq := headers["cseq"]; cseq != "" {
+		b.WriteString("CSeq: " + cseq + "\r\n")
+	}
+	b.WriteString("Contact: <sip:wacalls@" + s.localIP + ":" + strconv.Itoa(s.conn.LocalAddr().(*net.UDPAddr).Port) + ">\r\n")
+	b.WriteString("Allow: INVITE, ACK, CANCEL, BYE, OPTIONS\r\n")
+	b.WriteString("Accept: application/sdp\r\n")
+	b.WriteString("User-Agent: WaCalls-Asterisk-Gateway\r\n")
+	b.WriteString("Content-Length: 0\r\n\r\n")
+	_, _ = s.conn.WriteToUDP([]byte(b.String()), addr)
+	s.log.Debug("asterisk OPTIONS answered", "remote", addr.String())
 }
 
 func (s *AsteriskSIPServer) setDialog(callID string, leg *SIPInboundLeg) {
