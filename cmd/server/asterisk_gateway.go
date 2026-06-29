@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,6 +86,64 @@ func (g *AsteriskGateway) acquireRTPBind() (string, func(), error) {
 		return ":" + strconv.Itoa(port), release, nil
 	}
 	return g.defaults.RTPBind, release, nil
+}
+
+func (g *AsteriskGateway) sourceAllowed(ctx context.Context, ip net.IP) (bool, error) {
+	if ip == nil {
+		return false, nil
+	}
+	if sipTargetMatchesIP(g.defaults.DefaultTarget, ip) {
+		return true, nil
+	}
+	routes, err := g.store.list(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, route := range routes {
+		if route.Enabled && sipTargetMatchesIP(route.SIPTarget, ip) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func sipTargetMatchesIP(target string, ip net.IP) bool {
+	host := sipTargetHost(target)
+	if host == "" {
+		return false
+	}
+	if parsed := net.ParseIP(host); parsed != nil {
+		return parsed.Equal(ip)
+	}
+	addrs, err := net.LookupIP(host)
+	if err != nil {
+		return false
+	}
+	for _, addr := range addrs {
+		if addr.Equal(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func sipTargetHost(target string) string {
+	target = strings.TrimSpace(strings.TrimPrefix(target, "sip:"))
+	if target == "" {
+		return ""
+	}
+	if at := strings.LastIndex(target, "@"); at >= 0 {
+		target = target[at+1:]
+	}
+	if host, _, err := net.SplitHostPort(target); err == nil {
+		return strings.Trim(host, "[]")
+	}
+	if strings.Count(target, ":") == 1 {
+		if host, _, ok := strings.Cut(target, ":"); ok {
+			return strings.Trim(host, "[]")
+		}
+	}
+	return strings.Trim(target, "[]")
 }
 
 type rtpPortPool struct {

@@ -78,7 +78,7 @@ func (s *AsteriskSIPServer) loop(ctx context.Context) {
 			continue
 		}
 		if strings.HasPrefix(msg, "OPTIONS ") {
-			s.sendOptionsOK(msg, addr)
+			s.handleOptions(context.Background(), msg, addr)
 			continue
 		}
 		key := sipDialogKey(msg)
@@ -95,6 +95,17 @@ func (s *AsteriskSIPServer) loop(ctx context.Context) {
 }
 
 func (s *AsteriskSIPServer) handleInvite(ctx context.Context, msg string, addr *net.UDPAddr) {
+	allowed, err := s.gateway.sourceAllowed(ctx, addr.IP)
+	if err != nil {
+		s.log.Warn("asterisk source check failed", "remote_sip", addr.String(), "err", err)
+		sendStatelessSIPResponse(s.conn, addr, msg, 500, "Source Check Failed", "")
+		return
+	}
+	if !allowed {
+		s.log.Warn("asterisk SIP INVITE rejected from unknown source", "remote_sip", addr.String())
+		sendStatelessSIPResponse(s.conn, addr, msg, 403, "Forbidden", "")
+		return
+	}
 	req, err := parseInboundInvite(msg, addr)
 	if err != nil {
 		s.log.Warn("bad asterisk INVITE", "err", err)
@@ -168,7 +179,18 @@ func (s *AsteriskSIPServer) handleInvite(ctx context.Context, msg string, addr *
 	s.log.Info("outbound WhatsApp call started from Asterisk", "session", sess.id, "remote_sip", addr.String(), "sip_call_id", req.CallID, "call_id", callID, "target", req.TargetUser)
 }
 
-func (s *AsteriskSIPServer) sendOptionsOK(req string, addr *net.UDPAddr) {
+func (s *AsteriskSIPServer) handleOptions(ctx context.Context, req string, addr *net.UDPAddr) {
+	allowed, err := s.gateway.sourceAllowed(ctx, addr.IP)
+	if err != nil {
+		s.log.Warn("asterisk OPTIONS source check failed", "remote_sip", addr.String(), "err", err)
+		sendStatelessSIPResponse(s.conn, addr, req, 500, "Source Check Failed", "")
+		return
+	}
+	if !allowed {
+		s.log.Warn("asterisk OPTIONS rejected from unknown source", "remote_sip", addr.String())
+		sendStatelessSIPResponse(s.conn, addr, req, 403, "Forbidden", "")
+		return
+	}
 	headers := sipHeaders(req)
 	var b strings.Builder
 	b.WriteString("SIP/2.0 200 OK\r\n")
@@ -230,6 +252,9 @@ func (s *AsteriskSIPServer) selectOutboundSession(ctx context.Context, req inbou
 	var selected *Session
 	for _, route := range routes {
 		if !route.Enabled {
+			continue
+		}
+		if !sipTargetMatchesIP(route.SIPTarget, req.RemoteSIP.IP) {
 			continue
 		}
 		if req.WANumber != "" && route.WANumber != req.WANumber {
@@ -306,19 +331,20 @@ type SIPInboundConfig struct {
 }
 
 type SIPInboundLeg struct {
-	req      inboundSIPInvite
-	conn     *net.UDPConn
-	rtpConn  *net.UDPConn
-	localIP  string
-	rtpPort  int
-	callID   string
-	log      *slog.Logger
-	ssrc     uint32
-	txSeq    uint16
-	txTS     uint32
-	txQueue  chan []byte
-	answered atomic.Bool
-	closed   atomic.Bool
+	req       inboundSIPInvite
+	conn      *net.UDPConn
+	rtpConn   *net.UDPConn
+	localIP   string
+	rtpPort   int
+	callID    string
+	sipCallID string
+	log       *slog.Logger
+	ssrc      uint32
+	txSeq     uint16
+	txTS      uint32
+	txQueue   chan []byte
+	answered  atomic.Bool
+	closed    atomic.Bool
 
 	OnPCM      func([]float32)
 	OnClosed   func()
@@ -339,16 +365,17 @@ func NewSIPInboundLeg(cfg SIPInboundConfig) (*SIPInboundLeg, error) {
 		localIP = "127.0.0.1"
 	}
 	return &SIPInboundLeg{
-		req:     cfg.Request,
-		conn:    cfg.Conn,
-		rtpConn: rtpConn,
-		localIP: localIP,
-		rtpPort: rtpConn.LocalAddr().(*net.UDPAddr).Port,
-		log:     cfg.Log,
-		ssrc:    randUint32(),
-		txSeq:   uint16(randUint32()),
-		txTS:    randUint32(),
-		txQueue: make(chan []byte, 64),
+		req:       cfg.Request,
+		conn:      cfg.Conn,
+		rtpConn:   rtpConn,
+		localIP:   localIP,
+		rtpPort:   rtpConn.LocalAddr().(*net.UDPAddr).Port,
+		sipCallID: cfg.Request.CallID,
+		log:       cfg.Log,
+		ssrc:      randUint32(),
+		txSeq:     uint16(randUint32()),
+		txTS:      randUint32(),
+		txQueue:   make(chan []byte, 64),
 	}, nil
 }
 
@@ -370,7 +397,7 @@ func (l *SIPInboundLeg) Answer() {
 		return
 	}
 	l.sendResponse(200, "OK", l.localSDP())
-	l.log.Info("asterisk outbound SIP leg answered", "call_id", l.callID, "rtp", l.req.RemoteRTP.String())
+	l.log.Info("asterisk outbound SIP leg answered", "call_id", l.callID, "sip_call_id", l.sipCallID, "rtp", l.req.RemoteRTP.String())
 }
 
 func (l *SIPInboundLeg) Reject(code int, text string) {
@@ -378,7 +405,7 @@ func (l *SIPInboundLeg) Reject(code int, text string) {
 		return
 	}
 	l.sendResponse(code, text, "")
-	l.log.Info("asterisk outbound SIP leg rejected", "call_id", l.callID, "code", code, "reason", text)
+	l.log.Info("asterisk outbound SIP leg rejected", "call_id", l.callID, "sip_call_id", l.sipCallID, "code", code, "reason", text)
 	l.cleanup()
 }
 
@@ -408,10 +435,10 @@ func (l *SIPInboundLeg) Close() {
 	}
 	if l.answered.Load() {
 		l.sendRequest("BYE")
-		l.log.Info("asterisk outbound SIP BYE sent", "call_id", l.callID, "target", l.req.RemoteSIP.String())
+		l.log.Info("asterisk outbound SIP BYE sent", "call_id", l.callID, "sip_call_id", l.sipCallID, "target", l.req.RemoteSIP.String())
 	} else {
 		l.sendResponse(480, "Temporarily Unavailable", "")
-		l.log.Info("asterisk outbound SIP leg closed before answer", "call_id", l.callID)
+		l.log.Info("asterisk outbound SIP leg closed before answer", "call_id", l.callID, "sip_call_id", l.sipCallID)
 	}
 	l.cleanup()
 }
@@ -421,12 +448,12 @@ func (l *SIPInboundLeg) handleSIP(msg string) {
 	case strings.HasPrefix(msg, "ACK "):
 		return
 	case strings.HasPrefix(msg, "CANCEL "):
-		l.log.Info("asterisk outbound SIP CANCEL received", "call_id", l.callID)
+		l.log.Info("asterisk outbound SIP CANCEL received", "call_id", l.callID, "sip_call_id", l.sipCallID)
 		l.sendSIPResponseFor(msg, 200, "OK")
 		l.sendResponse(487, "Request Terminated", "")
 		l.closeRemote()
 	case strings.HasPrefix(msg, "BYE "):
-		l.log.Info("asterisk outbound SIP BYE received", "call_id", l.callID)
+		l.log.Info("asterisk outbound SIP BYE received", "call_id", l.callID, "sip_call_id", l.sipCallID)
 		l.sendSIPResponseFor(msg, 200, "OK")
 		l.closeRemote()
 	}
@@ -529,7 +556,7 @@ func (l *SIPInboundLeg) sendRequest(method string) {
 	b.WriteString("User-Agent: WaCalls-Asterisk-Gateway\r\n")
 	b.WriteString("Content-Length: 0\r\n\r\n")
 	_, _ = l.conn.WriteToUDP([]byte(b.String()), l.req.RemoteSIP)
-	l.log.Debug("asterisk outbound SIP request sent", "call_id", l.callID, "method", method, "target", uri)
+	l.log.Debug("asterisk outbound SIP request sent", "call_id", l.callID, "sip_call_id", l.sipCallID, "method", method, "target", uri)
 }
 
 func (l *SIPInboundLeg) localSDP() string {
