@@ -59,6 +59,19 @@ func (r *callRegistry) count() int {
 	return len(r.calls)
 }
 
+func (r *callRegistry) only() (string, *activeCall, bool, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	count := len(r.calls)
+	if count != 1 {
+		return "", nil, false, count
+	}
+	for id, ac := range r.calls {
+		return id, ac, true, count
+	}
+	return "", nil, false, count
+}
+
 func (r *callRegistry) setLeg(callID string, leg LocalMediaLeg) (LocalMediaLeg, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -250,6 +250,24 @@ func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall
 	return s.reg.get(callID)
 }
 
+func (s *Session) handleCallEndEvent(event string, from types.JID, data *waBinary.Node) {
+	node := wrapCall(from, data)
+	callID := callIDFromNode(node)
+	if callID != "" {
+		if ac, ok := s.reg.get(callID); ok {
+			ac.cm.HandleCallTerminate(node)
+			return
+		}
+	}
+	activeID, ac, ok, count := s.reg.only()
+	if !ok {
+		s.log.Warn("WhatsApp call end event did not match active call", "event", event, "from", from.String(), "event_call_id", callID, "active_calls", count)
+		return
+	}
+	s.log.Warn("WhatsApp call end event matched by single active call fallback", "event", event, "from", from.String(), "event_call_id", callID, "active_call_id", activeID)
+	ac.cm.HandleCallTerminate(node)
+}
+
 func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 	node := wrapCall(evt.From, evt.Data)
 	callID := callIDFromNode(node)
@@ -299,13 +317,9 @@ func (s *Session) handleEvent(rawEvt any) {
 			ac.cm.HandleCallTransport(ctx, wrapCall(evt.From, evt.Data), evt.From)
 		}
 	case *events.CallTerminate:
-		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
-			ac.cm.HandleCallTerminate(wrapCall(evt.From, evt.Data))
-		}
+		s.handleCallEndEvent("terminate", evt.From, evt.Data)
 	case *events.CallReject:
-		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
-			ac.cm.HandleCallTerminate(wrapCall(evt.From, evt.Data))
-		}
+		s.handleCallEndEvent("reject", evt.From, evt.Data)
 	}
 }
 
