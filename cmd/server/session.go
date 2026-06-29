@@ -105,7 +105,7 @@ func (s *Session) bridgeIncomingToAsterisk(c *call.CallInfo) {
 	if !ok {
 		return
 	}
-	caller := sipUserFromCall(c)
+	caller := s.sipCallerUser(context.Background(), c)
 	called := sipUserFromOwnJID(s.client.Store.ID)
 	leg, err := NewSIPLeg(s.mgr.asterisk, c.CallID, caller, called, s.log)
 	if err != nil {
@@ -148,14 +148,34 @@ func (s *Session) bridgeIncomingToAsterisk(c *call.CallInfo) {
 	leg.Start()
 }
 
-func sipUserFromCall(c *call.CallInfo) string {
+func (s *Session) sipCallerUser(ctx context.Context, c *call.CallInfo) string {
 	if c.CallerPn != "" {
 		return sipUserFromJIDString(c.CallerPn)
 	}
 	if c.PeerJid != "" {
+		if pn := s.resolvePNForSIPCaller(ctx, c.PeerJid); pn != "" {
+			return pn
+		}
 		return sipUserFromJIDString(c.PeerJid)
 	}
 	return "unknown"
+}
+
+func (s *Session) resolvePNForSIPCaller(ctx context.Context, rawJID string) string {
+	if s.client == nil || s.client.Store == nil || s.client.Store.LIDs == nil {
+		return ""
+	}
+	jid, err := types.ParseJID(rawJID)
+	if err != nil || jid.Server != types.HiddenUserServer {
+		return ""
+	}
+	pn, err := s.client.Store.LIDs.GetPNForLID(ctx, jid.ToNonAD())
+	if err != nil || pn.IsEmpty() {
+		s.log.Debug("no PN mapping for LID caller", "lid", rawJID, "err", err)
+		return ""
+	}
+	s.log.Info("resolved LID caller to PN", "lid", rawJID, "pn", pn.String())
+	return sipUserFromJIDString(pn.String())
 }
 
 func sipUserFromOwnJID(jid *types.JID) string {
