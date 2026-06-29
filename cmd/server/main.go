@@ -20,7 +20,8 @@ func main() {
 	maxCalls := flag.Int("max-calls-per-session", envInt("WACALLS_MAX_CALLS_PER_SESSION", 8), "max concurrent calls per session (0 = unlimited)")
 	asteriskTarget := flag.String("asterisk-sip-target", envString("WACALLS_ASTERISK_SIP_SERVER", envString("WACALLS_ASTERISK_SIP_TARGET", "")), "fallback Asterisk SIP server for inbound WhatsApp calls, e.g. asterisk:5060")
 	asteriskFrom := flag.String("asterisk-sip-from", envString("WACALLS_ASTERISK_SIP_FROM", "wacalls"), "fallback SIP user")
-	asteriskBind := flag.String("asterisk-sip-bind", envString("WACALLS_ASTERISK_SIP_BIND", ":0"), "local UDP bind address for SIP")
+	asteriskListen := flag.String("asterisk-sip-listen", envString("WACALLS_ASTERISK_SIP_LISTEN", envString("WACALLS_ASTERISK_SIP_BIND", "")), "local UDP listen address for INVITEs from Asterisk")
+	asteriskBind := flag.String("asterisk-sip-bind", envString("WACALLS_ASTERISK_UAC_SIP_BIND", ":0"), "local UDP bind address for SIP client legs to Asterisk")
 	asteriskRTPBind := flag.String("asterisk-rtp-bind", envString("WACALLS_ASTERISK_RTP_BIND", ":0"), "legacy local UDP bind address for RTP toward Asterisk")
 	asteriskAdvertiseIP := flag.String("asterisk-advertise-ip", envString("WACALLS_ADVERTISE_IP", ""), "IP advertised in SIP Contact and SDP (auto-detected when empty)")
 	asteriskRTPMin := flag.Int("asterisk-rtp-min", envInt("WACALLS_RTP_MIN", 0), "first RTP port for Asterisk media legs (0 = dynamic)")
@@ -40,6 +41,7 @@ func main() {
 	asterisk := AsteriskDefaults{
 		DefaultTarget: *asteriskTarget,
 		DefaultFrom:   *asteriskFrom,
+		ListenBind:    *asteriskListen,
 		SIPBind:       *asteriskBind,
 		RTPBind:       *asteriskRTPBind,
 		AdvertiseIP:   *asteriskAdvertiseIP,
@@ -57,6 +59,12 @@ func main() {
 		log.Error("session restore failed", "err", err)
 		os.Exit(1)
 	}
+	sipServer, err := srv.asterisk.StartSIPServer(ctx, srv.sessions, log)
+	if err != nil {
+		log.Error("asterisk sip server failed", "err", err)
+		os.Exit(1)
+	}
+	defer sipServer.Close()
 
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.routes()}
 	go func() {

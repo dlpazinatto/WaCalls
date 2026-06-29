@@ -86,6 +86,13 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 			rec.StartedAt = existing.StartedAt
 		}
 		s.mgr.broker.upsertCall(rec)
+		if c.StateData.State == core.CallStateActive {
+			if ac, ok := s.reg.get(c.CallID); ok && ac.leg != nil {
+				if answerer, ok := ac.leg.(AnswerableLocalMediaLeg); ok {
+					answerer.Answer()
+				}
+			}
+		}
 	}
 	cm.OnEnded = func(c *call.CallInfo) {
 		s.log.Info("WhatsApp call ended, closing local media leg", "call_id", c.CallID, "reason", string(c.StateData.EndReason))

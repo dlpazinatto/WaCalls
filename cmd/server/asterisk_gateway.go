@@ -11,6 +11,7 @@ import (
 type AsteriskDefaults struct {
 	DefaultTarget string
 	DefaultFrom   string
+	ListenBind    string
 	SIPBind       string
 	RTPBind       string
 	AdvertiseIP   string
@@ -73,6 +74,17 @@ func (g *AsteriskGateway) configForCall(ctx context.Context, sessionID, waNumber
 		AdvertiseIP: g.defaults.AdvertiseIP,
 	}
 	return AsteriskCallRoute{SIPConfig: cfg, ToUser: toUser, FromUser: fromUser, Release: release}, true, nil
+}
+
+func (g *AsteriskGateway) acquireRTPBind() (string, func(), error) {
+	port, release, err := g.rtpPool.acquire()
+	if err != nil {
+		return "", nil, err
+	}
+	if port != 0 {
+		return ":" + strconv.Itoa(port), release, nil
+	}
+	return g.defaults.RTPBind, release, nil
 }
 
 type rtpPortPool struct {

@@ -16,6 +16,10 @@ type LocalMediaLeg interface {
 	Close()
 }
 
+type AnswerableLocalMediaLeg interface {
+	Answer()
+}
+
 type callRegistry struct {
 	mu    sync.Mutex
 	calls map[string]*activeCall
