@@ -21,10 +21,6 @@ type SIPConfig struct {
 	AdvertiseIP string
 }
 
-func (c SIPConfig) Enabled() bool {
-	return strings.TrimSpace(c.Target) != ""
-}
-
 type SIPLeg struct {
 	cfg       SIPConfig
 	callID    string

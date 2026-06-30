@@ -71,43 +71,6 @@ func (m *SessionManager) Get(id string) (*Session, bool) {
 	return s, ok
 }
 
-func (m *SessionManager) sessionByWANumber(number string) (*Session, bool) {
-	want := normalizePhone(number)
-	if want == "" {
-		return nil, false
-	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for _, s := range m.sessions {
-		if s.client == nil || s.client.Store == nil || s.client.Store.ID == nil {
-			continue
-		}
-		if sipUserFromOwnJID(s.client.Store.ID) == want {
-			return s, true
-		}
-	}
-	return nil, false
-}
-
-func (m *SessionManager) singlePairedSession() (*Session, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var selected *Session
-	for _, s := range m.sessions {
-		if s.client == nil || s.client.Store == nil || s.client.Store.ID == nil {
-			continue
-		}
-		if selected != nil {
-			return nil, false
-		}
-		selected = s
-	}
-	if selected == nil {
-		return nil, false
-	}
-	return selected, true
-}
-
 func (m *SessionManager) infos() []SessionInfo {
 	m.mu.RLock()
 	ordered := make([]*Session, 0, len(m.order))

@@ -88,6 +88,8 @@ func (g *AsteriskGateway) acquireRTPBind() (string, func(), error) {
 	return g.defaults.RTPBind, release, nil
 }
 
+// sourceAllowed is used for SIP OPTIONS. It only verifies that the remote IP
+// belongs to at least one enabled Asterisk route; it does not choose a session.
 func (g *AsteriskGateway) sourceAllowed(ctx context.Context, ip net.IP) (bool, error) {
 	if ip == nil {
 		return false, nil
@@ -104,6 +106,9 @@ func (g *AsteriskGateway) sourceAllowed(ctx context.Context, ip net.IP) (bool, e
 	return false, nil
 }
 
+// outboundRouteForSource is the authoritative selector for Asterisk -> WhatsApp.
+// The INVITE must carry X-WaCalls-Number, and that number must belong to a route
+// whose sipServer resolves to the remote Asterisk IP.
 func (g *AsteriskGateway) outboundRouteForSource(ctx context.Context, waNumber string, ip net.IP) (AsteriskRoute, bool, error) {
 	waNumber = normalizePhone(waNumber)
 	if waNumber == "" || ip == nil {

@@ -145,6 +145,27 @@ cd client && npm install && cd ..
 go run ./cmd/server -addr :8080          # add -debug for verbose logs
 ```
 
+### Docker
+
+```bash
+docker compose up -d --build
+```
+
+UI/API:
+
+- http://localhost:8080
+
+Persistencia:
+
+- bind mount local `./data:/data`
+- banco SQLite em `/data/wacalls.db`
+
+### Asterisk gateway
+
+This fork can also run as a SIP/RTP gateway between WhatsApp Voice and Asterisk.
+See [docs/asterisk-gateway.md](docs/asterisk-gateway.md) for the route API,
+PJSIP/NAT configuration, SIP header contract, runtime variables, and code map.
+
 Live audio works out of the box — the MLow codec is pure Go, so a plain build
 includes it. No build tags, no `CGO_ENABLED`, no DLLs.
 
