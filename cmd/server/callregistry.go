@@ -11,15 +11,6 @@ type activeCall struct {
 	leg LocalMediaLeg
 }
 
-type LocalMediaLeg interface {
-	WritePCM([]float32) error
-	Close()
-}
-
-type AnswerableLocalMediaLeg interface {
-	Answer()
-}
-
 type callRegistry struct {
 	mu    sync.Mutex
 	calls map[string]*activeCall
